@@ -16,6 +16,8 @@ from PIL import ImageFont
 from PIL import Image
 from PIL import ImageDraw
 
+from utils.color_recognition_module import color_recognition_api
+
 
 def draw_plate_on_image(img, box, text, font):
     x1, y1, x2, y2 = box
@@ -116,20 +118,23 @@ def main():
                 for track_bbox in result['track_bboxes'][idx]:
                     if not track_bbox[-1] > args.score_thr:
                         continue
-                    if track_bbox[0] in car_track_license:
-                        if car_track_license[track_bbox[0]] is None or "":
-                            bbox = track_bbox[1:-1]
-                            car_image = mmcv.imcrop(img, bbox)
-                            license_results = catcher(car_image)  # list(code, confidence, type_idx, box)
-                            if license_results:
-                                license_result_idx = np.argmax(np.asarray(license_results, dtype=object), axis=0)[1]
-                                car_track_license[track_bbox[0]] = f"{license_results[license_result_idx][0]}"
-                    else:
+                    if track_bbox[0] not in car_track_license:
                         car_track_license[track_bbox[0]] = None
+                        bbox = track_bbox[1:-1]
+                        car_image = mmcv.imcrop(img, bbox)
+                        car_track_color[track_bbox[0]] = color_recognition_api.color_recognition(car_image)
+                    if car_track_license[track_bbox[0]] is None or "":
+                        bbox = track_bbox[1:-1]
+                        car_image = mmcv.imcrop(img, bbox)
+                        license_results = catcher(car_image)  # list(code, confidence, type_idx, box)
+                        if license_results:
+                            license_result_idx = np.argmax(np.asarray(license_results, dtype=object), axis=0)[1]
+                            car_track_license[track_bbox[0]] = f"{license_results[license_result_idx][0]}"
                     text = car_track_license[track_bbox[0]]
+                    color = car_track_color[track_bbox[0]]
                     if text is None:
                         text = 'Unknown'
-                    img = draw_plate_on_image(img, track_bbox[1:-1], text, font=font_ch)
+                    img = draw_plate_on_image(img, track_bbox[1:-1], f"{text}|{color}", font=font_ch)
                     img = np.array(img)
                     img.flags.writeable = True
 
