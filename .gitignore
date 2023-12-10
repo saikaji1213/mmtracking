@@ -121,3 +121,6 @@ mmtrack/.mim
 *.pth
 *.py~
 *.sh~
+
+# resources
+*.mp4
