@@ -96,8 +96,9 @@ def main():
 
     font_ch = ImageFont.truetype("./demo/font/platech.ttf", 20, 0)
     catcher = lpr3.LicensePlateCatcher(detect_level=lpr3.DETECT_LEVEL_HIGH)
-    car_track_license = {}
-    car_track_color = {}
+    car_track = {}  # map{id: list(license, color, start_frame, end_frame)}
+    pre_frame_ids = set()
+    cur_frame_ids = set()
 
     prog_bar = mmcv.ProgressBar(len(imgs))
     # test and show/save the images
@@ -107,7 +108,6 @@ def main():
         result = inference_mot(model, img, frame_id=i)
 
         # dealing result
-        # ic(result['det_bboxes'])
         car_refer_idxs = [68, 71, 85, 122, 186, 196, 232, 264, 272, 309, 331, 350, 444, 449]
         for idx in range(len(result['det_bboxes'])):
             if idx not in car_refer_idxs:
@@ -115,28 +115,40 @@ def main():
                 result['track_bboxes'][idx] = np.zeros((0, 6), dtype='float32')
             else:
                 # track_id不变期间识别截取track_bbox识别车牌，识别到不再识别
+                pre_frame_ids = cur_frame_ids
+                cur_frame_ids = set()
                 for track_bbox in result['track_bboxes'][idx]:
                     if not track_bbox[-1] > args.score_thr:
                         continue
-                    if track_bbox[0] not in car_track_license:
-                        car_track_license[track_bbox[0]] = None
+                    cur_frame_ids.add(track_bbox[0])
+                    # id first appearance
+                    if track_bbox[0] not in car_track:
                         bbox = track_bbox[1:-1]
                         car_image = mmcv.imcrop(img, bbox)
-                        car_track_color[track_bbox[0]] = color_recognition_api.color_recognition(car_image)
-                    if car_track_license[track_bbox[0]] is None or "":
-                        bbox = track_bbox[1:-1]
-                        car_image = mmcv.imcrop(img, bbox)
+                        car_track_color = color_recognition_api.color_recognition(car_image)
+                        car_track[track_bbox[0]] = [None, car_track_color, i, len(imgs)]
                         license_results = catcher(car_image)  # list(code, confidence, type_idx, box)
                         if license_results:
                             license_result_idx = np.argmax(np.asarray(license_results, dtype=object), axis=0)[1]
-                            car_track_license[track_bbox[0]] = f"{license_results[license_result_idx][0]}"
-                    text = car_track_license[track_bbox[0]]
-                    color = car_track_color[track_bbox[0]]
+                            car_track[track_bbox[0]][0] = f"{license_results[license_result_idx][0]}"
+                    else:
+                        if car_track[track_bbox[0]][0] is None or "":
+                            bbox = track_bbox[1:-1]
+                            car_image = mmcv.imcrop(img, bbox)
+                            license_results = catcher(car_image)
+                            if license_results:
+                                license_result_idx = np.argmax(np.asarray(license_results, dtype=object), axis=0)[1]
+                                car_track[track_bbox[0]][0] = f"{license_results[license_result_idx][0]}"
+                    text = car_track[track_bbox[0]][0]
+                    color = car_track[track_bbox[0]][1]
                     if text is None:
                         text = 'Unknown'
                     img = draw_plate_on_image(img, track_bbox[1:-1], f"{text}|{color}", font=font_ch)
                     img = np.array(img)
                     img.flags.writeable = True
+                ended_ids = [item for item in pre_frame_ids if item not in cur_frame_ids]
+                for ended_id in ended_ids:
+                    car_track[ended_id][3] = i
 
         if args.output is not None:
             if IN_VIDEO or OUT_VIDEO:
@@ -158,9 +170,19 @@ def main():
     if args.output and OUT_VIDEO:
         print(f'making the output video at {args.output} with a FPS of {fps}')
         mmcv.frames2video(out_path, args.output, fps=fps, fourcc='mp4v')
+        filepath, filename = os.path.split(args.output)
+        name, suffix = os.path.splitext(filename)
+        absp = os.path.abspath(f"{filepath}/{name}")
+        if not os.path.exists(absp):
+            os.makedirs(absp)
+        for track_id, feature in car_track.items():
+            track_output = f"{filepath}/{name}/{track_id}-{feature[0]}-{feature[1]}-{feature[2]}-{feature[3]}{suffix}"
+            print(f'making the output video at {track_output} with a FPS of {fps}')
+            mmcv.frames2video(out_path, track_output, fps=fps, fourcc='mp4v', start=feature[2], end=feature[3])
         out_dir.cleanup()
 
-    ic(car_track_license)
+    ic(car_track)
+
 
 if __name__ == '__main__':
     main()
